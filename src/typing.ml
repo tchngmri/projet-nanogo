@@ -14,22 +14,28 @@ exception Anomaly of string
 let error loc e = raise (Error (loc, e))
 
 (* TODO environnement pour les types structure *)
+let struct_env = Hashtbl.create(10) (* Table de hachage qui contient des (string, structure) *)
+(* est ce qu'il faut faire une table de hachage ou un module ?? c quoi la diff ? *)
 
 (* TODO environnement pour les fonctions *)
+let funct_env = Hashtbl.create(10) (* Table de hachage, contient des (string, function) *)
 
 let rec type_type = function
   | PTident { id = "int" } -> Tint
   | PTident { id = "bool" } -> Tbool
   | PTident { id = "string" } -> Tstring
   | PTptr ty -> Tptr (type_type ty)
-  | _ -> error dummy_loc ("unknown struct ") (* TODO type structure *)
+  | PTident { id = nom } -> match (Hashtbl.find_opt struct_env nom) with 
+                                | None -> error dummy_loc ("unknown struct")
+                                | Some s -> Tstruct s
+ (* TODO type structure *)
 
 let rec eq_type ty1 ty2 = match ty1, ty2 with
   | Tint, Tint | Tbool, Tbool | Tstring, Tstring -> true
   | Tstruct s1, Tstruct s2 -> s1 == s2
   | Tptr ty1, Tptr ty2 -> eq_type ty1 ty2
   | _ -> false
-    (* TODO autres types *)
+    (* TODO autres types *) (* ??? *)
 
 let fmt_used = ref false
 let fmt_imported = ref false
@@ -42,7 +48,7 @@ let new_var =
     incr id;
     { v_name = x; v_id = !id; v_loc = loc; v_typ = ty; v_used = used; v_addr = 0; v_depth = 0 }
 
-module Env = struct
+module Env = struct (* est ce qu'on définit une structure là ? *)
   module M = Map.Make(String)
   type t = var M.t
   let empty = M.empty
@@ -52,7 +58,7 @@ module Env = struct
   let all_vars = ref []
   let check_unused () =
     let check v =
-      if v.v_name <> "_" && (* TODO used *) true then error v.v_loc "unused variable" in
+      if v.v_name <> "_" && not(v.v_used) (*TO DO used*) then error v.v_loc "unused variable" in 
     List.iter check !all_vars
 
 
@@ -61,24 +67,43 @@ module Env = struct
     all_vars := v :: !all_vars;
     add env v, v
 
-  (* TODO type () et vecteur de types *)
+    
+    (* TODO type () et vecteur de types *)
 end
 
 let tvoid = Tmany []
 let make d ty = { expr_desc = d; expr_typ = ty }
 let stmt d = make d tvoid
 
-let rec expr env e =
- let e, ty, rt = expr_desc env e.pexpr_loc e.pexpr_desc in
-  { expr_desc = e; expr_typ = ty }, rt
 
-and expr_desc env loc = function
-  | PEskip ->
+let rec expr env e =
+ let e, ty, rt = (expr_desc env (e.pexpr_loc) (e.pexpr_desc)) in
+  { expr_desc = e; expr_typ = ty }, rt
+(* rt check si ya un return *)
+  and expr_desc env loc = function
+  | PEskip -> 
      TEskip, tvoid, false
-  | PEconstant c ->
-    (* TODO *) TEconstant c, tvoid, false
+  | PEconstant c -> 
+    TEconstant c, (match c with 
+      | Cbool _ -> Tbool
+      | Cint _ -> Tint
+      | Cstring _ -> Tstring), false
+    (* TODO *) 
   | PEbinop (op, e1, e2) ->
-    (* TODO *) assert false
+    let a1,a2 = (expr env e1), (expr env e2) in 
+    (TEbinop (op,(fst a1),(fst a2))), (match op with 
+    | Badd | Bsub | Bmul | Bdiv | Bmod -> 
+      (if (fst a1).expr_typ != Tint || (fst a2).expr_typ != Tint then (error loc "type int attendu ici")
+      else Tint)
+    | Beq | Bne -> 
+      if (fst a1).expr_typ == (fst a2).expr_typ then Tbool else (error loc "les deux expressions doivent avoir le même type")
+    | Blt | Ble | Bgt | Bge -> 
+      if (fst a1).expr_typ != Tint || (fst a2).expr_typ != Tint then (error loc "type int attendu ici") 
+      else Tbool
+    | Band | Bor -> 
+      if (fst a1).expr_typ != Tbool || (fst a2).expr_typ != Tbool then (error loc "type int attendu ici") 
+      else Tbool), false
+    (* TODO *) 
   | PEunop (Uamp, e1) ->
     (* TODO *) assert false
   | PEunop (Uneg | Unot | Ustar as op, e1) ->
