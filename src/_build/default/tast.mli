@@ -31,7 +31,7 @@ and typ =
   | Tint | Tbool | Tstring
   | Tstruct of structure
   | Tptr of typ
-  | Twild  (* type wildcard, tout type  *)
+  | Twild  (* type wildcard, tout type  INUTILE ??*)
   | Tmany of typ list (* 0 pour type retour instructions et >=2 pour retour functions *)
   (* TODO autres types pour l'analyse semantique, si besoin *)
 
