@@ -76,11 +76,14 @@ let make d ty = { expr_desc = d; expr_typ = ty }
 let stmt d = make d tvoid
 
 
+let rec islvalue x = true (* fonction qui détermine si c'est une l value... comment faire ? *)
+
+
 let rec expr env e =
  let e, ty, rt = (expr_desc env (e.pexpr_loc) (e.pexpr_desc)) in
   { expr_desc = e; expr_typ = ty }, rt
 (* rt check si ya un return *)
-  and expr_desc env loc = function
+  and expr_desc env loc = function (*refaire les erreurs pour qu'elles affichent type voulu...*)
   | PEskip -> 
      TEskip, tvoid, false
   | PEconstant c -> 
@@ -94,26 +97,36 @@ let rec expr env e =
     (TEbinop (op,(fst a1),(fst a2))), (match op with 
     | Badd | Bsub | Bmul | Bdiv | Bmod -> 
       (if (fst a1).expr_typ != Tint || (fst a2).expr_typ != Tint then (error loc "type int attendu ici")
-      else Tint)
+      else Tbool)
     | Beq | Bne -> 
-      if (fst a1).expr_typ == (fst a2).expr_typ then Tbool else (error loc "les deux expressions doivent avoir le même type")
+      if ((fst a1).expr_typ == (fst a2).expr_typ)&&((fst a1).expr_desc != TEnil)&&((fst a2).expr_desc != TEnil) 
+        then Tbool 
+      else (error loc "les deux expressions doivent avoir le même type")
     | Blt | Ble | Bgt | Bge -> 
       if (fst a1).expr_typ != Tint || (fst a2).expr_typ != Tint then (error loc "type int attendu ici") 
       else Tbool
     | Band | Bor -> 
-      if (fst a1).expr_typ != Tbool || (fst a2).expr_typ != Tbool then (error loc "type int attendu ici") 
+      if (fst a1).expr_typ != Tbool || (fst a2).expr_typ != Tbool then (error loc "type bool attendu ici") 
       else Tbool), false
     (* TODO *) 
-  | PEunop (Uamp, e1) ->
-    (* TODO *) assert false
-  | PEunop (Uneg | Unot | Ustar as op, e1) ->
-    (* TODO *) assert false
-  | PEcall ({id = "fmt.Print"}, el) ->
-    (* TODO *) TEprint [], tvoid, false
+  | PEunop (Uamp, e1) -> let a = expr env e1 in 
+    if (islvalue e1.pexpr_desc) then (TEunop (Uamp,(fst a)), Tptr (fst a).expr_typ, false) 
+    else error loc "l-value attendue pour prendre l'adresse" 
+    (* TODO *) 
+    | PEunop (Uneg | Unot | Ustar as op, e1) ->
+      let e2,_ = expr env e1 in (Teunop (op, e2), (match e2.expr_typ with 
+      | Tint -> if op == Uneg then Tint else (error loc "type int attendu") 
+      | Tbool -> if op == Unot then Tbool else (error loc "type bool attendu") 
+      | Tptr(t) -> if (op == Ustar)&&(e2.expr_typ != TEnil) then t else error loc "jsp quoi écrire"
+      | _ -> error loc "aaaaaa laide"),false)
+      (* TODO *)
+  | PEcall ({id = "fmt.Print"}, el) -> if not(!fmt_imported) then error loc  "fmt n'a pas été importé"
+  else fmt_used := true; let aafficher = List.map (fun e -> (fst (expr env e))) el in 
+    (* TODO *) TEprint aafficher, tvoid, false
   | PEcall ({id="new"}, [{pexpr_desc=PEident {id}}]) ->
      let ty = match id with
        | "int" -> Tint | "bool" -> Tbool | "string" -> Tstring
-       | _ -> (* TODO *) error loc ("no such type " ^ id) in
+       | _ -> (* TODO : j'ai pas comprs ce que faisait new*) error loc ("no such type " ^ id) in
      TEnew ty, Tptr ty, false
   | PEcall ({id="new"}, _) ->
      error loc "new expects a type"
@@ -130,13 +143,13 @@ let rec expr env e =
       with Not_found -> error loc ("unbound variable " ^ id))
   | PEdot (e, id) ->
      (* TODO *) assert false
-  | PEassign (lvl, el) ->
+  | PEassign (lvl, el) -> 
      (* TODO *) TEassign ([], []), tvoid, false 
-  | PEreturn el ->
+  | PEreturn el -> 
      (* TODO *) TEreturn [], tvoid, true
-  | PEblock el ->
+  | PEblock el -> 
      (* TODO *) TEblock [], tvoid, false
-  | PEincdec (e, op) ->
+  | PEincdec (e, op) -> 
      (* TODO *) assert false
   | PEvars _ ->
      (* TODO *) assert false 
@@ -145,17 +158,21 @@ let found_main = ref false
 
 (* 1. declare structures *)
 let phase1 = function
-  | PDstruct { ps_name = { id = id; loc = loc }} -> (* TODO *) ()
+  | PDstruct ({ ps_name = { id = id; loc = loc }} as s) -> if Hashtbl.mem struct_env id then 
+    error loc ("structure "^id^" has already been defined")
+    else Hashtbl.add struct_env id s
   | PDfunction _ -> ()
 
-let sizeof = function
+let rec sizeof = function
   | Tint | Tbool | Tstring | Tptr _ -> 8
-  | _ -> (* TODO *) assert false 
+  | Tstruct s -> Hashtbl.fold (fun _ a b -> b + sizeof (a.f_typ)) s.s_fields 0
+  | Tmany l -> List.fold_left (fun b a -> b + sizeof(a)) 0 l 
+(* TODO *) 
 
 (* 2. declare functions and type fields *)
 let phase2 = function
   | PDfunction { pf_name={id; loc}; pf_params=pl; pf_typ=tyl; } ->
-     (* TODO *) () 
+     (* TODO *) ()
   | PDstruct { ps_name = {id}; ps_fields = fl } ->
      (* TODO *) () 
 
@@ -180,3 +197,6 @@ let file ~debug:b (imp, dl) =
   Env.check_unused (); (* TODO variables non utilisees *)
   if imp && not !fmt_used then error dummy_loc "fmt imported but not used";
   dl
+
+
+  (* note : vérifier l'importation de fmt en dehors de la fonction expr*)
