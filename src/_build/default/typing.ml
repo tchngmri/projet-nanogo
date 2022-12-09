@@ -202,7 +202,7 @@ let rec expr env e =
   | PEnil ->
      TEnil, tvoid, false
   | PEident {id=id} ->
-      (try (let v = Env.find id !env in v.v_used <- true; TEident v, v.v_typ, false)
+      (try (let v = Env.find id !current_env in v.v_used <- true; TEident v, v.v_typ, false)
       with Not_found -> error loc ("unbound variable " ^ id))
   | PEdot (e, id) ->
      let exp,r = expr env e in 
