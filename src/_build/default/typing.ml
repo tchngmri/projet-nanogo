@@ -108,7 +108,7 @@ let pfunc_to_func f =
 		in fn, env
 
 let add_func f = 
-  if mem func_env f.pf_name.id then error f.pf_name.loc ("function "^f.pf_name.id^" defined twice")
+  if mem func_env f.pf_name.id then error f.pf_name.loc "function defined twice"
   else begin 
     add func_env f.pf_name.id (fst (pfunc_to_func f))
   end 
@@ -321,7 +321,7 @@ let found_main = ref false
 
 (* 1. declare structures *)
 let phase1 = function
-  | PDstruct ({ ps_name = { id ; loc } ; ps_fields} as ps) -> if mem struct_env id then error loc ("structure "^id^" defined twice") else
+  | PDstruct ({ ps_name = { id ; loc } ; ps_fields} as ps) -> if mem struct_env id then error loc ("structure "^id^"defined twice") else
     let s = pstruct_to_struct ps in add struct_env id s;
   | PDfunction _ -> ()
 
