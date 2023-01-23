@@ -32,14 +32,15 @@ open X86_64
 exception Anomaly of string
 
 let debug = ref false
+let tvoid = Tmany []
 
-let strings = Hashtbl.create 32
+let strings = Hashtbl.create 32 (*table label, string*)
 let alloc_string =
   let r = ref 0 in
   fun s ->
     incr r;
     let l = "S_" ^ string_of_int !r in
-    Hashtbl.add strings l s;
+    Hashtbl.add strings l s; 
     l
 
 let malloc n = movq (imm n) (reg rdi) ++ call "malloc"
@@ -54,7 +55,7 @@ type env = {
   exit_label: string;
   ofs_this: int;
   nb_locals: int ref; (* maximum *)
-  next_local: int; (* 0, 1, ... *)
+  mutable next_local: int; (* 0, 1, ... *)
 }
 
 let empty_env =
@@ -86,7 +87,9 @@ let rec expr env e = match e.expr_desc with
     xorq (reg rdi) (reg rdi)
 
   | TEconstant (Cstring s) ->
-    (* TODO code pour constante string *) assert false 
+    let labelstring = alloc_string s in 
+      movq (ilab labelstring) (reg rdi) (*peut on avoir 2 string identique avec 2 label diff ?*)
+  
   | TEbinop (Band, e1, e2) ->
     expr env (mk_bool(TEif (e1, e2, mk_bool (TEconstant (Cbool false)))))
     
@@ -147,35 +150,53 @@ let rec expr env e = match e.expr_desc with
       | _ -> assert false (*est ce qu'il faut faire le reste*)
       )
 
-    (* TODO code pour egalite toute valeur *) 
-
   | TEunop (Uneg, e1) ->
     expr env e1 ++ 
     negq (reg rdi) 
-    (* TODO code pour negation ints *) 
 
   | TEunop (Unot, e1) ->
     expr env e1 ++ 
     notq (reg rdi)
 
-    (* TODO code pour negation bool *) 
   | TEunop (Uamp, e1) ->
     (* TODO code pour & *) assert false 
   | TEunop (Ustar, e1) ->
-    (* TODO code pour * *) assert false 
+      (expr env e1) ++ movq (ind rdi) (reg rdi)
+
   | TEprint el ->
-    (* TODO code pour Print *) assert false 
-  | TEident x ->
-    (* TODO code pour x *) assert false 
+    (match el with 
+      | [] -> nop
+      | x::q -> begin expr env x ++ 
+        (match x.expr_typ with 
+          | Tint | Tbool -> call "print_int"         
+          | Tstring ->  call "print_string" 
+          (*structures : imprimer les fields, transformer les fields en liste *)
+          | _ -> nop) ++ (*faire les autres print : structures, pointeurs*)
+        expr env ({expr_desc = TEprint q; expr_typ = tvoid})
+      end)
+
+  | TEident x -> movq (ind ~ofs:(x.v_addr) rbp) (reg rdi)
   | TEassign ([{expr_desc=TEident x}], [e1]) ->
     (* TODO code pour x := e *) assert false 
   | TEassign ([lv], [e1]) ->
     (* TODO code pour x1,... := e1,... *) assert false 
   | TEassign (_, _) ->
      assert false
-  | TEblock el ->
-     (* TODO code pour block *) assert false
-
+  | TEblock el -> 
+  begin
+    let cur_env = ref env and nb_local = ref 0 in
+    let block_processing env init e = match e with 
+      | {expr_desc = TEvars (vl,el)} -> nb_local := !nb_local + (List.length vl); init ++ decl_var cur_env nop vl
+      | h -> init ++ expr !cur_env h
+    in
+      let t1 = List.fold_left (block_processing !cur_env) nop el in
+      let t2 = ref nop in
+        for i=0 to !nb_local-1 
+        do
+          t2 := !t2 ++ popq rdi
+        done;
+        t1 ++ !t2 
+    end
   | TEif (e1, e2, e3) -> let l_true = new_label() and l_end = new_label() in 
     expr env e1 ++ 
     testq (reg rdi) (reg rdi) ++ 
@@ -186,7 +207,6 @@ let rec expr env e = match e.expr_desc with
     expr env e2 ++ 
     label l_end 
 
-     (* TODO code pour if *) 
   | TEfor (e1, e2) -> let loop = new_label () and exit = new_label () in 
     label loop ++ 
     expr env e1 ++ 
@@ -195,12 +215,9 @@ let rec expr env e = match e.expr_desc with
     expr env e2 ++
     jmp loop ++ 
     label exit
-
-     (* TODO code pour for *) 
-
     
   | TEnew ty ->
-     (* TODO code pour new S *) assert false
+    malloc (sizeof ty) ++ movq (reg rax) (reg rdi)
 
   | TEcall (f, el) ->
      (* TODO code pour appel fonction *) assert false
@@ -212,7 +229,6 @@ let rec expr env e = match e.expr_desc with
      assert false (* fait dans block *)
 
   | TEreturn [] ->
-    
     (* TODO code pour return e *) assert false
 
   | TEreturn [e1] ->
@@ -222,11 +238,20 @@ let rec expr env e = match e.expr_desc with
      assert false
 
   | TEincdec (e1, op) ->
-    (* TODO code pour return e++, e-- *) assert false
+    (if op = Inc then incq else decq) (reg rdi)
+    (* TODO code pour return e++, e-- *) 
+
+and decl_var env text = function
+    | [] -> text
+    | v::q -> (v.v_addr <- !env.next_local-8);  incr !env.nb_locals; !env.next_local <- !env.next_local - 8; 
+              decl_var env (text ++ pushq (imm 0)) q
+  
+
+  
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
-  (* TODO code pour fonction *) let s = f.fn_name in label ("F_" ^ s) 
+  (* TODO code pour fonction *) let s = f.fn_name in label ("F_" ^ s) ++ expr empty_env e
 
 let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e
@@ -249,10 +274,17 @@ print_int:
         xorq    %rax, %rax
         call    printf
         ret
+print_string: 
+	      movq %rdi, %rsi
+	      movq $S_string, %rdi
+	      xorq %rax, %rax
+	      call printf
+	      ret
 "; (* TODO print pour d'autres valeurs *)
    (* TODO appel malloc de stdlib *)
     data =
       label "S_int" ++ string "%ld" ++
+      label "S_string" ++ string "%s" ++ 
       (Hashtbl.fold (fun l s d -> label l ++ string s ++ d) strings nop)
     ;
   }
