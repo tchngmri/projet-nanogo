@@ -64,8 +64,8 @@ let empty_env =
 let fun_env f =
     { empty_env with exit_label = "E_" ^ f.fn_name; nb_locals= ref 0}
 
-let mk_bool d = { expr_desc = d; expr_typ = Tbool }
-let mk_int i = { expr_desc = i; expr_typ = Tint }
+let mk_bool d = { expr_desc = d; expr_typ = Tbool } (* crée expression expr de type Tbool à partir d'une expr_desc de type bool *)
+let mk_int i = { expr_desc = i; expr_typ = Tint } (* crée expression expr de type Tint à partir d'une expr_desc de type int *)
 
 (* f reçoit le label correspondant à ``renvoyer vrai'' *)
 let compile_bool f =
@@ -76,10 +76,10 @@ let compile_bool f =
 
 let rec expr env e = match e.expr_desc with
   | TEskip ->
-    nop
+    nop 
 
   | TEconstant (Cbool true) ->
-    movq (imm 1) (reg rdi)
+    movq (imm 1) (reg rdi) (* on renvoie toujours le résultat dans le registre rdi *)
 
   | TEconstant (Cbool false) ->
     movq (imm 0) (reg rdi)
@@ -90,14 +90,14 @@ let rec expr env e = match e.expr_desc with
   | TEnil ->
     xorq (reg rdi) (reg rdi)
 
-  | TEconstant (Cstring s) ->
+  | TEconstant (Cstring s) -> (* on alloue de la mémoire, on crée la chaine de caractère et on la stocke dans rdi *)
     let labelstring = alloc_string s in 
-      movq (ilab labelstring) (reg rdi) (*peut on avoir 2 string identique avec 2 label diff ?*)
+      movq (ilab labelstring) (reg rdi) 
   
-  | TEbinop (Band, e1, e2) ->
+  | TEbinop (Band, e1, e2) -> (* et lazy : on évalue e2 que si e1 est vraie *)
     expr env (mk_bool(TEif (e1, e2, mk_bool (TEconstant (Cbool false)))))
     
-  | TEbinop (Bor, e1, e2) ->
+  | TEbinop (Bor, e1, e2) -> (* ou lazy : on évalue e2 que si e1 est faux *)
     expr env (mk_bool(TEif (e1, mk_bool (TEconstant (Cbool true)), e2)))
    
   | TEbinop (Blt | Ble | Bgt | Bge as op, e1, e2) ->
@@ -105,9 +105,9 @@ let rec expr env e = match e.expr_desc with
     pushq (reg rdi) ++ 
     expr env e2 ++ 
     popq (rax) ++ 
-    cmpq (reg rdi) (reg rax) ++ compile_bool
-   ( match op with 
-    | Blt -> js (* normalement bon sens des registres, déjà vérifié *)
+    cmpq (reg rdi) (reg rax) ++ (* on compare les expressions, puis on appelle compile_bool avec le bon drapeau *)
+    compile_bool ( match op with 
+    | Blt -> js 
     | Ble -> jle 
     | Bgt -> jg
     | Bge -> jge
@@ -119,7 +119,7 @@ let rec expr env e = match e.expr_desc with
     expr env e2 ++ 
    ( match op with 
     | Badd -> movq (reg rdi) (reg rax) ++ 
-              popq (rdi) ++ (*e1 dans rdi, e2 dans rax*)
+              popq (rdi) ++ 
               addq (reg rax) (reg rdi) 
     | Bsub -> movq (reg rdi) (reg rax) ++ 
               popq (rdi) ++
@@ -127,70 +127,75 @@ let rec expr env e = match e.expr_desc with
     | Bmul -> movq (reg rdi) (reg rax) ++ 
               popq (rdi) ++ 
               imulq (reg rax) (reg rdi)
-    | Bdiv -> popq (rax) ++ (*divise rax par l'entrée, mets dividende dans rax, reste dans rdx, ne pas oublier de mettre  rdx à 0*)
-              xorq (reg rdx) (reg rdx) ++  (*e1 dans rax, e2 dans rdi*)
+    | Bdiv -> popq (rax) ++ 
+              xorq (reg rdx) (reg rdx) ++ 
               idivq (reg rdi) ++ 
               movq (reg rax) (reg rdi)
-    | Bmod -> popq (rax) ++ (*divise rax par l'entrée, mets dividende dans rax, reste dans rdx, ne pas oublier de mettre  rdx à 0*)
-              xorq (reg rdx) (reg rdx) ++  (*e1 dans rax, e2 dans rdi*)
+    | Bmod -> popq (rax) ++ 
+              xorq (reg rdx) (reg rdx) ++  
               idivq (reg rdi) ++ 
               movq (reg rdx) (reg rdi)
     | _ -> assert false)
 
-  | TEbinop (Beq | Bne as op, e1, e2) -> (*attention, comparaison tout type !*)
+  | TEbinop (Beq | Bne as op, e1, e2) -> 
     expr env e1 ++ 
     pushq (reg rdi) ++
     expr env e2 ++ 
-    (match e1.expr_typ with 
+    (match e1.expr_typ with (* comparaison en fonction du type... ici, que les eniters ! *)
       | Tint | Tbool -> (
         popq (rax) ++
         cmpq (reg rdi) (reg rax) ++
         compile_bool (match op with 
           | Beq -> je
           | Bne -> jne
-          | _ -> assert false ))
-      | Tstring -> assert false (*comment comparer des strings ? *)
-      | Tstruct s -> assert false (*comparer champ par champ*)
-      | _ -> assert false (*est ce qu'il faut faire le reste*)
+          | _ -> assert false )) 
+      | Tstring -> assert false (* pas sûre de savoir faire... *)
+      | _ -> assert false 
       )
 
   | TEunop (Uneg, e1) ->
-    expr env e1 ++ 
+    expr env e1 ++  
     negq (reg rdi) 
 
   | TEunop (Unot, e1) ->
     expr env e1 ++ 
     notq (reg rdi)
 
-  | TEunop (Uamp, e1) ->
+  | TEunop (Uamp, e1) -> 
     (match e1.expr_desc with
-    | TEident x -> leaq (ind ~ofs:(x.v_addr) rbp) rdi
-    | TEunop (Ustar, e) -> expr env e 
-    (*| TEdot (e, { f_ofs = ofs }) -> expr env e ++ leaq (ind ~ofs rdi) rdi*)
+    | TEident x -> leaq (ind ~ofs:(x.v_addr) rbp) rdi (* x est stockée dans la pile avec un offset stocké dans x.v_addr, il suffit d'utiliser leaq pour récupérer l'adresse *)
+    | TEunop (Ustar, e) -> expr env e (* l'adresse du pointeur est sa valeur ! *)
     | _ -> assert false)
-  | TEunop (Ustar, e1) ->
-      (expr env e1) ++ movq (ind rdi) (reg rdi)
 
-  | TEprint el ->
+  | TEunop (Ustar, e1) ->
+      (expr env e1) ++ movq (ind rdi) (reg rdi) (* on remplace rdi par son adresse *)
+
+  | TEprint el -> (* différents print sont à traiter : ici, on ne fait que int et string *)
     (match el with 
       | [] -> nop
       | x::q -> begin expr env x ++ 
         (match x.expr_typ with 
-          | Tint | Tbool -> call "print_int"         
+          | Tint | Tbool -> call "print_int" (* print_int et print_string sont définis à la fin du fichier dans la fonciton file *)      
           | Tstring ->  call "print_string" 
-          (*structures : imprimer les fields, transformer les fields en liste *)
-          | _ -> nop) ++ (*faire les autres print : structures, pointeurs*)
+          | _ -> nop) ++ 
         expr env ({expr_desc = TEprint q; expr_typ = tvoid})
       end)
 
-  | TEident x -> movq (ind ~ofs:(x.v_addr) rbp) (reg rdi)
-  | TEassign ([{expr_desc=TEident x}], [e1]) -> expr env e1 ++
-     movq (reg rdi) ((ind ~ofs:x.v_addr rbp))
-    (* TODO code pour x := e *)
-  | TEassign ([lv], [e1]) ->
-    (* TODO code pour x1,... := e1,... *) assert false 
-  | TEassign (_, _) ->
-     assert false
+  | TEident x -> (* on récupère le contenu de x dans la pile, son offset étant stocké dans x.v_addr *)
+    movq (ind ~ofs:(x.v_addr) rbp) (reg rdi) 
+
+  | TEassign ([{expr_desc=TEident x}], [e1]) -> (* on évalue e1, puis on le stocke à l'emplacement de x dans la pile *)
+    expr env e1 ++
+    movq (reg rdi) ((ind ~ofs:x.v_addr rbp)) 
+
+  | TEassign (lv, el) -> (* on sait que lv et el sont de même longueue après l'étape du typage *)
+    let rec aux = function 
+      | [],[] -> nop 
+      | ({expr_desc=TEident x}::lv, e1::el) -> (* on fait de même que précédemment, mais en itérant pour chaque variable *)
+        expr env e1 ++
+        movq (reg rdi) ((ind ~ofs:x.v_addr rbp)) ++ aux (lv,el) 
+      in aux (lv,el)
+
   | TEblock el -> begin
     let cur_env = ref env and nb_local = ref 0 in
     let block_processing env init e = match e with 
@@ -205,7 +210,9 @@ let rec expr env e = match e.expr_desc with
         done;
         t1 ++ !t2 
     end
-  | TEif (e1, e2, e3) -> let l_true = new_label() and l_end = new_label() in 
+
+  | TEif (e1, e2, e3) -> 
+    let l_true = new_label() and l_end = new_label() in 
     expr env e1 ++ 
     testq (reg rdi) (reg rdi) ++ 
     jne l_true ++ 
@@ -225,25 +232,31 @@ let rec expr env e = match e.expr_desc with
     label exit
     
   | TEnew ty ->
-    malloc (sizeof ty) ++ movq (reg rax) (reg rdi)
+    malloc (sizeof ty) ++ 
+    movq (reg rax) (reg rdi)
 
-  | TEcall (f, el) ->
-     (* TODO code pour appel fonction *) assert false
+  | TEcall (f, el) -> (* appel de fonction : on place tous les arguments sur la pile puis on sauvegarde %rbp et on appelle la fonction *)
+    let l1 = List.fold_left (push_params env) nop el in
+    l1 ++ call ("F_"^(f.fn_name)) ++ addq (imm ((List.length el)*8)) !%rsp
 
   | TEdot (e1, {f_ofs=ofs}) ->
      (* TODO code pour e.f *) assert false
 
-  | TEvars _ ->
-     assert false (* fait dans block *)
+  | TEvars _ -> (* fait dans block *)
+     assert false 
 
   | TEreturn [] ->
-    movq (ind rbp) (reg rbp) ++ ret
+    jmp env.exit_label
 
   | TEreturn [e1] ->
-    (expr env e1) ++ movq (reg rdi) (reg rax) ++ movq (reg rbp) (reg rsp) ++ movq (ind rbp) (reg rbp) ++ ret 
+    expr env e1 ++ jmp env.exit_label
 
-  | TEreturn _ ->
-     assert false
+  | TEreturn el ->
+    (List.fold_left (fun c exp ->
+      c ++
+      expr env exp ++
+      pushq (reg rdi)) nop el) ++
+    jmp env.exit_label
 
   | TEincdec (e1, op) ->
       match op with (* on distngue les cas incrémentation ét décrémentation*)
@@ -266,14 +279,15 @@ and decl_var env text = function
     | [] -> text
     | v::q -> (v.v_addr <- !env.next_local-8); !env.next_local <- !env.next_local - 8; 
               decl_var env (text ++ pushq (imm 0)) q
+and push_params env init e = init ++ expr env e ++ pushq (reg rdi)
   
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
   let s = f.fn_name in 
   let env = fun_env f in
-  let args_addr = ref ((List.length f.fn_params) * 8 + 8) in
-  List.iter (fun v -> v.v_addr <- !args_addr; args_addr := !args_addr - 8) f.fn_params;
+  let arg_addr = ref ((List.length f.fn_params) * 8 + 8) in
+  List.iter (fun v -> v.v_addr <- !arg_addr; arg_addr := !arg_addr - 8) f.fn_params;
     label ("F_" ^ s) ++
     pushq (reg rbp) ++
     movq (reg rsp) (reg rbp) ++
