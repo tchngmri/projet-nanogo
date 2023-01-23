@@ -7,8 +7,32 @@ main:
 F_main:
 	pushq %rbp
 	movq %rsp, %rbp
+	pushq $0
+L_1:
+	movq -8(%rbp), %rdi
+	pushq %rdi
+	movq $10, %rdi
+	popq %rax
+	cmpq %rdi, %rax
+	jle L_3
+	movq $0, %rdi
+	jmp L_4
+L_3:
+	movq $1, %rdi
+L_4:
+	testq %rdi, %rdi
+	jz L_2
 	movq $S_1, %rdi
 	call print_string
+	movq -8(%rbp), %rdi
+	incq %rdi
+	pushq %rdi
+	leaq -8(%rbp), %rdi
+	popq %rbx
+	movq %rbx, 0(%rdi)
+	jmp L_1
+L_2:
+	popq %rdi
 E_main:
 	movq %rbp, %rsp
 	popq %rbp
@@ -32,4 +56,4 @@ S_int:
 S_string:
 	.string "%s"
 S_1:
-	.string "cc"
+	.string "a"

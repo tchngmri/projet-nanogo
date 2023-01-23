@@ -61,7 +61,11 @@ type env = {
 let empty_env =
   { exit_label = ""; ofs_this = -1; nb_locals = ref 0; next_local = 0 }
 
+let fun_env f =
+    { empty_env with exit_label = "E_" ^ f.fn_name; nb_locals= ref 0}
+
 let mk_bool d = { expr_desc = d; expr_typ = Tbool }
+let mk_int i = { expr_desc = i; expr_typ = Tint }
 
 (* f reçoit le label correspondant à ``renvoyer vrai'' *)
 let compile_bool f =
@@ -159,7 +163,11 @@ let rec expr env e = match e.expr_desc with
     notq (reg rdi)
 
   | TEunop (Uamp, e1) ->
-    (* TODO code pour & *) assert false 
+    (match e1.expr_desc with
+    | TEident x -> leaq (ind ~ofs:(x.v_addr) rbp) rdi
+    | TEunop (Ustar, e) -> expr env e 
+    (*| TEdot (e, { f_ofs = ofs }) -> expr env e ++ leaq (ind ~ofs rdi) rdi*)
+    | _ -> assert false)
   | TEunop (Ustar, e1) ->
       (expr env e1) ++ movq (ind rdi) (reg rdi)
 
@@ -176,14 +184,14 @@ let rec expr env e = match e.expr_desc with
       end)
 
   | TEident x -> movq (ind ~ofs:(x.v_addr) rbp) (reg rdi)
-  | TEassign ([{expr_desc=TEident x}], [e1]) ->
-    (* TODO code pour x := e *) assert false 
+  | TEassign ([{expr_desc=TEident x}], [e1]) -> expr env e1 ++
+     movq (reg rdi) ((ind ~ofs:x.v_addr rbp))
+    (* TODO code pour x := e *)
   | TEassign ([lv], [e1]) ->
     (* TODO code pour x1,... := e1,... *) assert false 
   | TEassign (_, _) ->
      assert false
-  | TEblock el -> 
-  begin
+  | TEblock el -> begin
     let cur_env = ref env and nb_local = ref 0 in
     let block_processing env init e = match e with 
       | {expr_desc = TEvars (vl,el)} -> nb_local := !nb_local + (List.length vl); init ++ decl_var cur_env nop vl
@@ -211,7 +219,7 @@ let rec expr env e = match e.expr_desc with
     label loop ++ 
     expr env e1 ++ 
     testq (reg rdi) (reg rdi) ++
-    je exit ++ 
+    jz exit ++ 
     expr env e2 ++
     jmp loop ++ 
     label exit
@@ -229,29 +237,51 @@ let rec expr env e = match e.expr_desc with
      assert false (* fait dans block *)
 
   | TEreturn [] ->
-    (* TODO code pour return e *) assert false
+    movq (ind rbp) (reg rbp) ++ ret
 
   | TEreturn [e1] ->
-    (* TODO code pour return e1,... *) assert false
+    (expr env e1) ++ movq (reg rdi) (reg rax) ++ movq (reg rbp) (reg rsp) ++ movq (ind rbp) (reg rbp) ++ ret 
 
   | TEreturn _ ->
      assert false
 
   | TEincdec (e1, op) ->
-    (if op = Inc then incq else decq) (reg rdi)
-    (* TODO code pour return e++, e-- *) 
+      match op with (* on distngue les cas incrémentation ét décrémentation*)
+      | Inc ->
+          expr env e1
+          ++ incq (reg rdi) (*on évalue les parametres et on les met sur la pile*)
+          ++ pushq (reg rdi) (*met resultat sur la pile*)
+          ++ expr env (mk_int (TEunop (Uamp, e1))) (*recup adresse variable*)
+          ++ popq rbx (*recup valeur ++*)
+          ++ movq (reg rbx) (ind rdi) (*met valeur ++ à l'adresse de la variable*)
+      | Dec ->
+          expr env e1
+          ++ decq (reg rdi)
+          ++ pushq (reg rdi)
+          ++ expr env (mk_int (TEunop (Uamp, e1)))
+          ++ popq rbx
+          ++ movq (reg rbx) (ind rdi)
 
 and decl_var env text = function
     | [] -> text
-    | v::q -> (v.v_addr <- !env.next_local-8);  incr !env.nb_locals; !env.next_local <- !env.next_local - 8; 
+    | v::q -> (v.v_addr <- !env.next_local-8); !env.next_local <- !env.next_local - 8; 
               decl_var env (text ++ pushq (imm 0)) q
-  
-
   
 
 let function_ f e =
   if !debug then eprintf "function %s:@." f.fn_name;
-  (* TODO code pour fonction *) let s = f.fn_name in label ("F_" ^ s) ++ expr empty_env e
+  let s = f.fn_name in 
+  let env = fun_env f in
+  let args_addr = ref ((List.length f.fn_params) * 8 + 8) in
+  List.iter (fun v -> v.v_addr <- !args_addr; args_addr := !args_addr - 8) f.fn_params;
+    label ("F_" ^ s) ++
+    pushq (reg rbp) ++
+    movq (reg rsp) (reg rbp) ++
+    expr env e ++
+    label ("E_" ^ s) ++
+    movq (reg rbp) (reg rsp) ++
+    popq rbp ++
+    ret
 
 let decl code = function
   | TDfunction (f, e) -> code ++ function_ f e

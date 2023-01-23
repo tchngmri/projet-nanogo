@@ -3,6 +3,6 @@ import "fmt"
 
 func main() {
 	var x int;
-	x=2+3;
+	x=2;
 	fmt.Print(x);
 }

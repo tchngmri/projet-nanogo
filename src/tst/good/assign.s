@@ -7,8 +7,12 @@ main:
 F_main:
 	pushq %rbp
 	movq %rsp, %rbp
-	movq $S_1, %rdi
-	call print_string
+	pushq $0
+	movq $2, %rdi
+	movq %rdi, -8(%rbp)
+	movq -8(%rbp), %rdi
+	call print_int
+	popq %rdi
 E_main:
 	movq %rbp, %rsp
 	popq %rbp
@@ -31,5 +35,3 @@ S_int:
 	.string "%ld"
 S_string:
 	.string "%s"
-S_1:
-	.string "cc"
